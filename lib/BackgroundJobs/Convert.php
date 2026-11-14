@@ -5,10 +5,9 @@ declare(strict_types=1);
 namespace OCA\WorkflowXoppToPdfConverter\BackgroundJobs;
 
 use Exception;
-use OC\Files\Filesystem;
-use OC\Files\View;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\BackgroundJob\QueuedJob;
+use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\InvalidPathException;
 use OCP\Files\IRootFolder;
@@ -64,13 +63,15 @@ class Convert extends QueuedJob {
 
 		$pathSegments = explode('/', $path, 4);
 		$user = $pathSegments[1];
-		$dir = dirname($path);
 		$file = basename($path);
 
-		Filesystem::init($user, '/' . $user . '/files');
 		try {
 			$node = $this->rootFolder->get($path);
 		} catch (NotFoundException $e) {
+			return;
+		}
+
+		if (!($node instanceof File)) {
 			return;
 		}
 
@@ -83,12 +84,23 @@ class Convert extends QueuedJob {
 			return;
 		}
 
-		$view = new View($dir);
-		$tmpPath = $view->toTmpFile($file);
 		$tmpDir = $this->tempManager->getTempBaseDir();
-
+		$tmpPath = $tmpDir . '/' . uniqid('xopp_in_', true) . '.xopp';
 		$newFileName = $this->generateFileName($file, $node, $user, $namingPattern);
-		$newTmpPath = $tmpDir . '/' . uniqid('xopp_conv_', true) . '.pdf';
+		$newTmpPath = $tmpDir . '/' . uniqid('xopp_out_', true) . '.pdf';
+
+		$srcStream = $node->readStream();
+		$destHandle = fopen($tmpPath, 'w');
+		if ($srcStream === false || $destHandle === false) {
+			$this->logger->error('Failed to open stream for {file}', [
+				'app' => 'workflow_xopp2pdf_converter',
+				'file' => $node->getPath(),
+			]);
+			return;
+		}
+		stream_copy_to_stream($srcStream, $destHandle);
+		fclose($srcStream);
+		fclose($destHandle);
 
 		try {
 			$exec = escapeshellcmd($command)
@@ -107,7 +119,7 @@ class Convert extends QueuedJob {
 				return;
 			}
 
-			// Resolve destination folder
+			// Resolve destination folder using OCP\Files API
 			$targetFolder = $this->resolveTargetFolder($node, $user, $outputDir);
 
 			// Handle conflicts if target file already exists
@@ -118,10 +130,20 @@ class Convert extends QueuedJob {
 				$newFileName = $targetBaseName . ' (' . $index . ').pdf';
 			}
 
-			// Write converted file back to Nextcloud
-			$targetPath = '/' . ltrim($targetFolder->getPath(), '/');
-			$targetView = new View($targetPath);
-			$targetView->fromTmpFile($newTmpPath, $newFileName);
+			// Write converted file back to Nextcloud storage via OCP\Files API
+			$pdfStream = fopen($newTmpPath, 'r');
+			if ($pdfStream !== false) {
+				if ($targetFolder->nodeExists($newFileName)) {
+					$existingNode = $targetFolder->get($newFileName);
+					if ($existingNode instanceof File) {
+						$existingNode->putContent($pdfStream);
+					}
+				} else {
+					$targetFile = $targetFolder->newFile($newFileName);
+					$targetFile->putContent($pdfStream);
+				}
+				fclose($pdfStream);
+			}
 
 			// Delete original if requested
 			if ($originalFileMode === 'delete') {

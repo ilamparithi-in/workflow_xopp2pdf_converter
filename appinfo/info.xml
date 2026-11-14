@@ -6,9 +6,10 @@
 	<name>Automated XOPP 2 PDF conversion</name>
 	<summary>Rule based conversion of Xournal / Xournal++ files into the PDF format</summary>
 	<description>Convert Xournal (.xoj) and Xournalpp (.xopp) files into PDFs. Based on admin defined rules, a background job file be set up when a matching file was created or written, or was assigned a tag. Then, Xournal++ is being utilized for converting the document.</description>
-	<version>1.0.0</version>
+	<version>1.1.0</version>
 	<licence>agpl</licence>
 	<author mail="info@foxicle.de">Fabian Pohl</author>
+	<author mail="ilamparithi.in@gmail.com">Ilamparithi Murali</author>
 	<namespace>WorkflowXoppToPdfConverter</namespace>
 	<types>
 		<filesystem/>
@@ -17,12 +18,12 @@
 	<category>tools</category>
 	<category>organization</category>
 	<category>workflow</category>
-	<website>https://github.com/MineErich/workflow_xopp2pdf_converter</website>
-	<bugs>https://github.com/MineErich/workflow_xopp2pdf_converter/issues</bugs>
-	<repository type="git">https://github.com/MineErich/workflow_xopp2pdf_converter.git</repository>
+	<website>https://github.com/ilamparithi-in/workflow_xopp2pdf_converter</website>
+	<bugs>https://github.com/ilamparithi-in/workflow_xopp2pdf_converter/issues</bugs>
+	<repository type="git">https://github.com/ilamparithi-in/workflow_xopp2pdf_converter.git</repository>
 	<screenshot>https://raw.githubusercontent.com/MineErich/workflow_xopp2pdf_converter/refs/heads/main/screenshots/flow-settings-ui.png</screenshot>
 	<screenshot small-thumbnail="https://raw.githubusercontent.com/MineErich/workflow_xopp2pdf_converter/refs/heads/main/screenshots/management-apps_small.png">https://raw.githubusercontent.com/MineErich/workflow_xopp2pdf_converter/refs/heads/main/screenshots/management-apps.png</screenshot>
 	<dependencies>
-		<nextcloud min-version="31" max-version="32" />
+		<nextcloud min-version="31" max-version="35" />
 	</dependencies>
 </info>
