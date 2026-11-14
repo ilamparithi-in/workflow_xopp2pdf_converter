@@ -36,12 +36,12 @@ class Operation implements ISpecificOperation {
 		IJobList $jobList,
 		IL10N $l,
 		IURLGenerator $urlGenerator,
-		LoggerInterface $logger,
+		?LoggerInterface $logger = null,
 	) {
 		$this->jobList = $jobList;
 		$this->l = $l;
 		$this->urlGenerator = $urlGenerator;
-		$this->logger = $logger;
+		$this->logger = $logger ?? \OCP\Server::get(LoggerInterface::class);
 	}
 
 	public function parseOperationConfig(string $operation): array {

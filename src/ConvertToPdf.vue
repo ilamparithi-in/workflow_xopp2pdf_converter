@@ -34,19 +34,19 @@ import NcTextField from '@nextcloud/vue/dist/Components/NcTextField.js'
 const pdfConvertOptions = [
 	{
 		id: 'keep;preserve',
-		text: t('workflow_xopp2pdf_converter', 'Keep original, preserve existing PDFs'),
+		text: typeof window !== 'undefined' && typeof window.t === 'function' ? window.t('workflow_xopp2pdf_converter', 'Keep original, preserve existing PDFs') : 'Keep original, preserve existing PDFs',
 	},
 	{
 		id: 'keep;overwrite',
-		text: t('workflow_xopp2pdf_converter', 'Keep original, overwrite existing PDF'),
+		text: typeof window !== 'undefined' && typeof window.t === 'function' ? window.t('workflow_xopp2pdf_converter', 'Keep original, overwrite existing PDF') : 'Keep original, overwrite existing PDF',
 	},
 	{
 		id: 'delete;preserve',
-		text: t('workflow_xopp2pdf_converter', 'Delete original, preserve existing PDFs'),
+		text: typeof window !== 'undefined' && typeof window.t === 'function' ? window.t('workflow_xopp2pdf_converter', 'Delete original, preserve existing PDFs') : 'Delete original, preserve existing PDFs',
 	},
 	{
 		id: 'delete;overwrite',
-		text: t('workflow_xopp2pdf_converter', 'Delete original, overwrite existing PDF'),
+		text: typeof window !== 'undefined' && typeof window.t === 'function' ? window.t('workflow_xopp2pdf_converter', 'Delete original, overwrite existing PDF') : 'Delete original, overwrite existing PDF',
 	},
 ]
 
@@ -118,6 +118,12 @@ export default {
 				...this.config,
 				namingPattern: val,
 			})
+		},
+		t(app, text) {
+			if (typeof window !== 'undefined' && typeof window.t === 'function') {
+				return window.t(app, text)
+			}
+			return text
 		},
 	},
 }
