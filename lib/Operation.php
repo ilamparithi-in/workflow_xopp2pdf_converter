@@ -1,6 +1,6 @@
 <?php
 
-
+declare(strict_types=1);
 
 namespace OCA\WorkflowXoppToPdfConverter;
 
@@ -35,8 +35,25 @@ class Operation implements ISpecificOperation {
 		$this->urlGenerator = $urlGenerator;
 	}
 
+	public function parseOperationConfig(string $operation): array {
+		$decoded = json_decode($operation, true);
+		if (is_array($decoded) && isset($decoded['mode'])) {
+			return [
+				'mode' => (string)$decoded['mode'],
+				'outputDir' => trim((string)($decoded['outputDir'] ?? '')),
+				'namingPattern' => trim((string)($decoded['namingPattern'] ?? '{filename}.pdf')),
+			];
+		}
+		return [
+			'mode' => $operation,
+			'outputDir' => '',
+			'namingPattern' => '{filename}.pdf',
+		];
+	}
+
 	public function validateOperation(string $name, array $checks, string $operation): void {
-		if (!in_array($operation, Operation::MODES)) {
+		$config = $this->parseOperationConfig($operation);
+		if (!in_array($config['mode'], Operation::MODES, true)) {
 			throw new UnexpectedValueException($this->l->t('Please choose a mode.'));
 		}
 	}
@@ -85,15 +102,30 @@ class Operation implements ISpecificOperation {
 				return;
 			}
 
+			// Check for .noconvert or .noexport in current folder or parent folders
+			if ($this->isExcludedByMarker($node)) {
+				return;
+			}
+
 			$matches = $ruleMatcher->getFlows(false);
 			$originalFileMode = $targetPdfMode = null;
+			$outputDir = '';
+			$namingPattern = '{filename}.pdf';
+
 			foreach ($matches as $match) {
-				$fileModes = explode(';', $match['operation']);
+				$config = $this->parseOperationConfig($match['operation']);
+				$fileModes = explode(';', $config['mode']);
 				if ($originalFileMode !== 'keep') {
 					$originalFileMode = $fileModes[0];
 				}
 				if ($targetPdfMode !== 'preserve') {
 					$targetPdfMode = $fileModes[1];
+				}
+				if (!empty($config['outputDir']) && empty($outputDir)) {
+					$outputDir = $config['outputDir'];
+				}
+				if (!empty($config['namingPattern']) && $namingPattern === '{filename}.pdf') {
+					$namingPattern = $config['namingPattern'];
 				}
 				if ($originalFileMode === 'keep' && $targetPdfMode === 'preserve') {
 					// most conservative setting, no need to look into other modes
@@ -105,10 +137,37 @@ class Operation implements ISpecificOperation {
 					'path' => $node->getPath(),
 					'originalFileMode' => $originalFileMode,
 					'targetPdfMode' => $targetPdfMode,
+					'outputDir' => $outputDir,
+					'namingPattern' => $namingPattern,
 				]);
 			}
 		} catch (\OCP\Files\NotFoundException $e) {
 		}
+	}
+
+	public function isExcludedByMarker(Node $node): bool {
+		try {
+			$current = $node instanceof Folder ? $node : $node->getParent();
+			$maxDepth = 20;
+			while ($current instanceof Folder && $maxDepth-- > 0) {
+				if ($current->nodeExists('.noconvert') || $current->nodeExists('.noexport')) {
+					return true;
+				}
+				$path = trim($current->getPath(), '/');
+				$parts = explode('/', $path);
+				// Path looks like "username/files" or "files" at root level
+				if (count($parts) <= 2 && in_array('files', $parts, true)) {
+					break;
+				}
+				$parent = $current->getParent();
+				if ($parent === null || $parent->getId() === $current->getId()) {
+					break;
+				}
+				$current = $parent;
+			}
+		} catch (\Exception $e) {
+		}
+		return false;
 	}
 
 	public function getEntityId(): string {
