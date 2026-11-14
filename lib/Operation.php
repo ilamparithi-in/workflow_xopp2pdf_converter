@@ -15,6 +15,8 @@ use OCP\IL10N;
 use OCP\IURLGenerator;
 use OCP\WorkflowEngine\IRuleMatcher;
 use OCP\WorkflowEngine\ISpecificOperation;
+use Psr\Log\LoggerInterface;
+use Throwable;
 use UnexpectedValueException;
 
 class Operation implements ISpecificOperation {
@@ -28,11 +30,18 @@ class Operation implements ISpecificOperation {
 	private IJobList $jobList;
 	private IL10N $l;
 	private IURLGenerator $urlGenerator;
+	private LoggerInterface $logger;
 
-	public function __construct(IJobList $jobList, IL10N $l, IURLGenerator $urlGenerator) {
+	public function __construct(
+		IJobList $jobList,
+		IL10N $l,
+		IURLGenerator $urlGenerator,
+		LoggerInterface $logger,
+	) {
 		$this->jobList = $jobList;
 		$this->l = $l;
 		$this->urlGenerator = $urlGenerator;
+		$this->logger = $logger;
 	}
 
 	public function parseOperationConfig(string $operation): array {
@@ -104,6 +113,10 @@ class Operation implements ISpecificOperation {
 
 			// Check for .noconvert or .noexport in current folder or parent folders
 			if ($this->isExcludedByMarker($node)) {
+				$this->logger->debug('Skipping conversion for {file} due to marker file (.noconvert/.noexport)', [
+					'app' => 'workflow_xopp2pdf_converter',
+					'file' => $node->getPath(),
+				]);
 				return;
 			}
 
@@ -132,6 +145,7 @@ class Operation implements ISpecificOperation {
 					break;
 				}
 			}
+
 			if (!empty($originalFileMode) && !empty($targetPdfMode)) {
 				$this->jobList->add(Convert::class, [
 					'path' => $node->getPath(),
@@ -140,8 +154,22 @@ class Operation implements ISpecificOperation {
 					'outputDir' => $outputDir,
 					'namingPattern' => $namingPattern,
 				]);
+
+				$this->logger->info('Queued XOPP to PDF conversion for {file} (mode: {originalFileMode}/{targetPdfMode}, outputDir: "{outputDir}", pattern: "{namingPattern}")', [
+					'app' => 'workflow_xopp2pdf_converter',
+					'file' => $node->getPath(),
+					'originalFileMode' => $originalFileMode,
+					'targetPdfMode' => $targetPdfMode,
+					'outputDir' => $outputDir,
+					'namingPattern' => $namingPattern,
+				]);
 			}
-		} catch (\OCP\Files\NotFoundException $e) {
+		} catch (Throwable $e) {
+			$this->logger->error('Error during XOPP conversion flow event handling: {msg}', [
+				'app' => 'workflow_xopp2pdf_converter',
+				'msg' => $e->getMessage(),
+				'exception' => $e,
+			]);
 		}
 	}
 
@@ -165,7 +193,7 @@ class Operation implements ISpecificOperation {
 				}
 				$current = $parent;
 			}
-		} catch (\Exception $e) {
+		} catch (Throwable $e) {
 		}
 		return false;
 	}

@@ -17,6 +17,7 @@ use OCP\Files\NotPermittedException;
 use OCP\IConfig;
 use OCP\ITempManager;
 use Psr\Log\LoggerInterface;
+use Throwable;
 use UnexpectedValueException;
 
 class Convert extends QueuedJob {
@@ -47,124 +48,203 @@ class Convert extends QueuedJob {
 	 * @throws NotFoundException
 	 */
 	protected function run($argument) {
-		$command = $this->getCommand();
-		if ($command === null) {
-			$this->logger->error('Can not find xournalpp path. Please make sure to configure "preview_xournalpp_path" in your config file.', [
-				'app' => 'workflow_xopp2pdf_converter',
-			]);
-			return;
-		}
-
-		$path = (string)$argument['path'];
+		$path = (string)($argument['path'] ?? '');
 		$originalFileMode = (string)($argument['originalFileMode'] ?? 'keep');
 		$targetPdfMode = (string)($argument['targetPdfMode'] ?? 'preserve');
 		$outputDir = isset($argument['outputDir']) ? trim((string)$argument['outputDir']) : '';
 		$namingPattern = !empty($argument['namingPattern']) ? trim((string)$argument['namingPattern']) : '{filename}.pdf';
 
-		$pathSegments = explode('/', $path, 4);
-		$user = $pathSegments[1];
-		$file = basename($path);
-
-		try {
-			$node = $this->rootFolder->get($path);
-		} catch (NotFoundException $e) {
-			return;
-		}
-
-		if (!($node instanceof File)) {
-			return;
-		}
-
-		// Safeguard check: skip if .noconvert or .noexport was created
-		if ($this->isExcludedByMarker($node)) {
-			$this->logger->info('Skipping conversion for {file} due to marker file (.noconvert/.noexport)', [
+		if (empty($path)) {
+			$this->logger->error('Convert background job called with empty file path argument', [
 				'app' => 'workflow_xopp2pdf_converter',
-				'file' => $node->getPath(),
 			]);
 			return;
 		}
 
-		$tmpDir = $this->tempManager->getTempBaseDir();
-		$tmpPath = $tmpDir . '/' . uniqid('xopp_in_', true) . '.xopp';
-		$newFileName = $this->generateFileName($file, $node, $user, $namingPattern);
-		$newTmpPath = $tmpDir . '/' . uniqid('xopp_out_', true) . '.pdf';
-
-		$srcStream = $node->readStream();
-		$destHandle = fopen($tmpPath, 'w');
-		if ($srcStream === false || $destHandle === false) {
-			$this->logger->error('Failed to open stream for {file}', [
-				'app' => 'workflow_xopp2pdf_converter',
-				'file' => $node->getPath(),
-			]);
-			return;
-		}
-		stream_copy_to_stream($srcStream, $destHandle);
-		fclose($srcStream);
-		fclose($destHandle);
-
 		try {
-			$exec = escapeshellcmd($command)
-				. ' --create-pdf=' . escapeshellarg($newTmpPath)
-				. ' ' . escapeshellarg($tmpPath);
-
-			$exitCode = 0;
-			$out = [];
-			exec($exec, $out, $exitCode);
-			if ($exitCode !== 0) {
-				$this->logger->error('could not convert {file}, reason: {out}', [
+			$command = $this->getCommand();
+			if ($command === null) {
+				$this->logger->error('Cannot find xournalpp binary. Please install xournalpp or configure "preview_xournalpp_path" in your config.php', [
 					'app' => 'workflow_xopp2pdf_converter',
-					'file' => $node->getPath(),
-					'out' => implode("\n", $out),
+					'file' => $path,
 				]);
 				return;
 			}
 
-			// Resolve destination folder using OCP\Files API
-			$targetFolder = $this->resolveTargetFolder($node, $user, $outputDir);
+			$pathSegments = explode('/', $path, 4);
+			$user = $pathSegments[1] ?? '';
+			$file = basename($path);
 
-			// Handle conflicts if target file already exists
-			$targetBaseName = pathinfo($newFileName, PATHINFO_FILENAME);
-			$index = 0;
-			while ($targetPdfMode === 'preserve' && $targetFolder->nodeExists($newFileName)) {
-				$index++;
-				$newFileName = $targetBaseName . ' (' . $index . ').pdf';
+			try {
+				$node = $this->rootFolder->get($path);
+			} catch (NotFoundException $e) {
+				$this->logger->warning('Source file {file} not found in rootFolder (may have been deleted or moved)', [
+					'app' => 'workflow_xopp2pdf_converter',
+					'file' => $path,
+				]);
+				return;
 			}
 
-			// Write converted file back to Nextcloud storage via OCP\Files API
-			$pdfStream = fopen($newTmpPath, 'r');
-			if ($pdfStream !== false) {
-				if ($targetFolder->nodeExists($newFileName)) {
-					$existingNode = $targetFolder->get($newFileName);
-					if ($existingNode instanceof File) {
-						$existingNode->putContent($pdfStream);
-					}
-				} else {
-					$targetFile = $targetFolder->newFile($newFileName);
-					$targetFile->putContent($pdfStream);
-				}
-				fclose($pdfStream);
+			if (!($node instanceof File)) {
+				$this->logger->warning('Source node {file} is not a File instance (instance of {class})', [
+					'app' => 'workflow_xopp2pdf_converter',
+					'file' => $path,
+					'class' => get_class($node),
+				]);
+				return;
 			}
 
-			// Delete original if requested
-			if ($originalFileMode === 'delete') {
-				try {
-					$node->delete();
-				} catch (\Exception $e) {
-					$this->logger->warning('could not delete original file {file}: {msg}', [
+			// Safeguard check: skip if .noconvert or .noexport was created
+			if ($this->isExcludedByMarker($node)) {
+				$this->logger->info('Skipping conversion for {file} due to marker file (.noconvert/.noexport)', [
+					'app' => 'workflow_xopp2pdf_converter',
+					'file' => $node->getPath(),
+				]);
+				return;
+			}
+
+			$tmpDir = $this->tempManager->getTempBaseDir();
+			$tmpPath = $tmpDir . '/' . uniqid('xopp_in_', true) . '.xopp';
+			$newFileName = $this->generateFileName($file, $node, $user, $namingPattern);
+			$newTmpPath = $tmpDir . '/' . uniqid('xopp_out_', true) . '.pdf';
+
+			$srcStream = $node->readStream();
+			$destHandle = fopen($tmpPath, 'w');
+			if ($srcStream === false || $destHandle === false) {
+				$this->logger->error('Failed to open streams to write temporary xopp file for {file}', [
+					'app' => 'workflow_xopp2pdf_converter',
+					'file' => $node->getPath(),
+				]);
+				return;
+			}
+			stream_copy_to_stream($srcStream, $destHandle);
+			fclose($srcStream);
+			fclose($destHandle);
+
+			try {
+				// Redirect stderr to stdout (2>&1) so xournalpp errors, font warnings, and crashes are captured
+				$exec = escapeshellcmd($command)
+					. ' --create-pdf=' . escapeshellarg($newTmpPath)
+					. ' ' . escapeshellarg($tmpPath)
+					. ' 2>&1';
+
+				$exitCode = 0;
+				$out = [];
+				exec($exec, $out, $exitCode);
+
+				if ($exitCode !== 0) {
+					$this->logger->error('xournalpp conversion failed with exit code {code} for {file}. Output: {out}', [
 						'app' => 'workflow_xopp2pdf_converter',
 						'file' => $node->getPath(),
-						'msg' => $e->getMessage(),
+						'code' => $exitCode,
+						'out' => implode("\n", $out),
+						'command' => $command,
+					]);
+					return;
+				}
+
+				// If xournalpp exited 0 but printed warnings (e.g. font substitution or Pango warnings), log them transparently
+				if (!empty($out)) {
+					$this->logger->warning('xournalpp output warnings for {file}: {out}', [
+						'app' => 'workflow_xopp2pdf_converter',
+						'file' => $node->getPath(),
+						'out' => implode("\n", $out),
 					]);
 				}
+
+				// Verify output PDF exists and has content
+				if (!file_exists($newTmpPath) || filesize($newTmpPath) === 0) {
+					$this->logger->error('xournalpp exited with code 0 but target PDF was not created or is 0 bytes for {file}', [
+						'app' => 'workflow_xopp2pdf_converter',
+						'file' => $node->getPath(),
+					]);
+					return;
+				}
+
+				// Resolve destination folder using OCP\Files API
+				$targetFolder = $this->resolveTargetFolder($node, $user, $outputDir);
+
+				// Handle conflicts if target file already exists
+				$targetBaseName = pathinfo($newFileName, PATHINFO_FILENAME);
+				$index = 0;
+				while ($targetPdfMode === 'preserve' && $targetFolder->nodeExists($newFileName)) {
+					$index++;
+					$newFileName = $targetBaseName . ' (' . $index . ').pdf';
+				}
+
+				// Write converted file back to Nextcloud storage via OCP\Files API
+				$pdfStream = fopen($newTmpPath, 'r');
+				if ($pdfStream === false) {
+					$this->logger->error('Failed to open generated PDF {tmp} for reading into storage', [
+						'app' => 'workflow_xopp2pdf_converter',
+						'tmp' => $newTmpPath,
+					]);
+					return;
+				}
+
+				try {
+					if ($targetFolder->nodeExists($newFileName)) {
+						$existingNode = $targetFolder->get($newFileName);
+						if ($existingNode instanceof File) {
+							$existingNode->putContent($pdfStream);
+						}
+					} else {
+						$targetFile = $targetFolder->newFile($newFileName);
+						$targetFile->putContent($pdfStream);
+					}
+				} catch (Throwable $e) {
+					$this->logger->error('Failed to write PDF to target Nextcloud folder {targetFolder}/{newFileName}: {msg}', [
+						'app' => 'workflow_xopp2pdf_converter',
+						'targetFolder' => $targetFolder->getPath(),
+						'newFileName' => $newFileName,
+						'msg' => $e->getMessage(),
+						'exception' => $e,
+					]);
+					return;
+				} finally {
+					fclose($pdfStream);
+				}
+
+				$this->logger->info('Successfully converted {file} -> {targetFolder}/{newFileName}', [
+					'app' => 'workflow_xopp2pdf_converter',
+					'file' => $node->getPath(),
+					'targetFolder' => $targetFolder->getPath(),
+					'newFileName' => $newFileName,
+					'mode' => $originalFileMode . ';' . $targetPdfMode,
+				]);
+
+				// Delete original if requested
+				if ($originalFileMode === 'delete') {
+					try {
+						$node->delete();
+						$this->logger->info('Deleted original file {file} as requested by flow configuration', [
+							'app' => 'workflow_xopp2pdf_converter',
+							'file' => $node->getPath(),
+						]);
+					} catch (Throwable $e) {
+						$this->logger->warning('Could not delete original file {file}: {msg}', [
+							'app' => 'workflow_xopp2pdf_converter',
+							'file' => $node->getPath(),
+							'msg' => $e->getMessage(),
+						]);
+					}
+				}
+			} finally {
+				// Clean up temporary files on disk
+				if (file_exists($newTmpPath)) {
+					@unlink($newTmpPath);
+				}
+				if (file_exists($tmpPath)) {
+					@unlink($tmpPath);
+				}
 			}
-		} finally {
-			// Clean up temporary files on disk
-			if (file_exists($newTmpPath)) {
-				@unlink($newTmpPath);
-			}
-			if (file_exists($tmpPath)) {
-				@unlink($tmpPath);
-			}
+		} catch (Throwable $e) {
+			$this->logger->error('Unhandled exception during XOPP conversion background job for {file}: {msg}', [
+				'app' => 'workflow_xopp2pdf_converter',
+				'file' => $path,
+				'msg' => $e->getMessage(),
+				'exception' => $e,
+			]);
 		}
 	}
 
@@ -265,7 +345,7 @@ class Convert extends QueuedJob {
 				}
 				$current = $parent;
 			}
-		} catch (\Exception $e) {
+		} catch (Throwable $e) {
 		}
 		return false;
 	}
