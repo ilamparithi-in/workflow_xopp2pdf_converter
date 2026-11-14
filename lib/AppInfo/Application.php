@@ -1,14 +1,16 @@
 <?php
 
-
+declare(strict_types=1);
 
 namespace OCA\WorkflowXoppToPdfConverter\AppInfo;
 
+use OCA\WorkflowXoppToPdfConverter\Listener\LoadSettingsScriptsListener;
 use OCA\WorkflowXoppToPdfConverter\Listener\RegisterFlowOperationsListener;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
+use OCP\WorkflowEngine\Events\LoadSettingsScriptsEvent;
 use OCP\WorkflowEngine\Events\RegisterOperationsEvent;
 
 class Application extends App implements IBootstrap {
@@ -18,6 +20,7 @@ class Application extends App implements IBootstrap {
 
 	public function register(IRegistrationContext $context): void {
 		$context->registerEventListener(RegisterOperationsEvent::class, RegisterFlowOperationsListener::class);
+		$context->registerEventListener(LoadSettingsScriptsEvent::class, LoadSettingsScriptsListener::class);
 	}
 
 	public function boot(IBootContext $context): void {
